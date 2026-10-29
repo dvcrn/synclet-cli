@@ -76,13 +76,16 @@ function parseChecksums(text) {
 
 (async function main() {
   try {
-    const platform = envOverride("PLATFORM") || process.platform;
-    if (!["darwin", "linux"].includes(platform)) {
+    // Release assets name Windows "windows", while Node reports "win32".
+    const rawPlatform = envOverride("PLATFORM") || process.platform;
+    const platform = rawPlatform === "win32" ? "windows" : rawPlatform;
+    if (!["darwin", "linux", "windows"].includes(platform)) {
       console.error(
-        "synclet: npm install supports macOS (darwin) and Linux only",
+        "synclet: npm install supports macOS (darwin), Linux and Windows only",
       );
       process.exit(1);
     }
+    const isWindows = platform === "windows";
 
     const pkg = JSON.parse(
       fs.readFileSync(path.join(__dirname, "package.json"), "utf8"),
@@ -107,7 +110,8 @@ function parseChecksums(text) {
       process.exit(1);
     }
 
-    const assetName = `${BIN}_${version}_${platform}_${arch}.tar.gz`;
+    const ext = isWindows ? "zip" : "tar.gz";
+    const assetName = `${BIN}_${version}_${platform}_${arch}.${ext}`;
     const base =
       envOverride("BASE_URL") ||
       `https://github.com/${OWNER}/${REPO}/releases/download/${version}`;
@@ -115,7 +119,7 @@ function parseChecksums(text) {
     const checksumsUrl = `${base}/checksums.txt`;
     const headers = { "User-Agent": `${REPO}-postinstall` };
     const outDir = __dirname;
-    const exe = BIN;
+    const exe = isWindows ? `${BIN}.exe` : BIN;
     const binPath = path.join(outDir, exe);
 
     if (fs.existsSync(binPath)) {
@@ -126,7 +130,7 @@ function parseChecksums(text) {
     }
 
     console.log(`postinstall: downloading ${assetName} from ${url}`);
-    const tarGz = await httpGet(url, { headers });
+    const archive = await httpGet(url, { headers });
 
     // checksum (best effort)
     try {
@@ -134,7 +138,7 @@ function parseChecksums(text) {
       const checksums = parseChecksums(checksumsBuf.toString("utf8"));
       const sumExpected = checksums.get(assetName);
       if (!sumExpected) throw new Error("asset not in checksums.txt");
-      const sumActual = sha256(tarGz);
+      const sumActual = sha256(archive);
       if (sumActual.toLowerCase() !== sumExpected.toLowerCase())
         throw new Error("checksum mismatch");
       console.log("postinstall: checksum OK");
@@ -143,11 +147,17 @@ function parseChecksums(text) {
     }
 
     // extract only the binary into npm directory (archive contains binary at root)
-    const tmpFile = path.join(os.tmpdir(), `${REPO}-${Date.now()}.tar.gz`);
-    fs.writeFileSync(tmpFile, tarGz);
-    const tarRes = spawnSync("tar", ["-xzf", tmpFile, "-C", outDir, exe], {
-      stdio: "inherit",
-    });
+    const tmpFile = path.join(os.tmpdir(), `${REPO}-${Date.now()}.${ext}`);
+    fs.writeFileSync(tmpFile, archive);
+    // Windows 10+ ships bsdtar as System32\tar.exe, which can read zip files.
+    // Use it by full path so a GNU tar from Git Bash on PATH doesn't win.
+    const tarCmd = isWindows
+      ? path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe")
+      : "tar";
+    const tarArgs = isWindows
+      ? ["-xf", tmpFile, "-C", outDir, exe]
+      : ["-xzf", tmpFile, "-C", outDir, exe];
+    const tarRes = spawnSync(tarCmd, tarArgs, { stdio: "inherit" });
     if (tarRes.status !== 0) {
       console.error("postinstall: failed to extract binary");
       process.exit(1);
