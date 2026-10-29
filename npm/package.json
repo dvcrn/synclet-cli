@@ -1,6 +1,6 @@
 {
   "name": "synclet",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "CLI interface for syncing with Synclet (formerly ConfigMesh)",
   "homepage": "https://synclet.dev",
   "repository": {
